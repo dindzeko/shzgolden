@@ -4,12 +4,12 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 # Judul aplikasi
-st.title("📥 Pengambilan Data Historis Saham")
-st.markdown("Aplikasi ini mengambil data historis 150 hari terakhir untuk ticker berikut:")
-st.code("BBCA, SRTG, TLKM")
+st.title("📥 Pengambilan Data Historis Saham BEI")
+st.markdown("Aplikasi ini mengambil data historis **150 hari terakhir** untuk ticker berikut:")
+st.markdown("- BBCA.JK (Bank Central Asia)\n- TLKM.JK (Telkom Indonesia)\n- SRTG.JK (Surya Toto Indonesia)")
 
 # Daftar ticker yang akan diambil datanya
-tickers = ["BBCA", "SRTG", "TLKM"]
+tickers = ["BBCA", "TLKM", "SRTG"]
 
 # Tanggal mulai dan akhir
 end_date = datetime.today()
