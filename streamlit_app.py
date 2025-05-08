@@ -1,21 +1,17 @@
 import streamlit as st
 import yfinance as yf
-from datetime import datetime, timedelta
+from datetime import datetime
 import pandas as pd
 
 # Judul aplikasi
 st.title("📥 Pengambilan Data Historis Saham BEI")
-st.markdown("Aplikasi ini mengambil data historis **150 hari terakhir** untuk ticker berikut:")
+st.markdown("Aplikasi ini mengambil data historis **150 hari perdagangan terakhir** untuk ticker berikut:")
 st.markdown("- BBCA.JK (Bank Central Asia)\n- TLKM.JK (Telkom Indonesia)\n- SRTG.JK (Surya Toto Indonesia)")
 
 # Daftar ticker lengkap dengan .JK
 tickers = ["BBCA.JK", "TLKM.JK", "SRTG.JK"]
 
-# Rentang tanggal
-end_date = datetime.today()
-start_date = end_date - timedelta(days=150)
-
-all_data = {}  # Menyimpan data untuk setiap ticker
+all_data = {}  # Dictionary untuk menyimpan semua data
 
 progress_bar = st.progress(0)
 status_text = st.empty()
@@ -23,22 +19,27 @@ status_text = st.empty()
 for i, ticker in enumerate(tickers):
     try:
         status_text.text(f"Mengambil data untuk {ticker}...")
-        data = yf.download(ticker, start=start_date, end=end_date)
+
+        # Menggunakan period="150d" agar ambil 150 hari perdagangan terakhir
+        data = yf.download(ticker, period="150d", auto_adjust=True)
 
         if not data.empty:
             all_data[ticker] = data[['Open', 'High', 'Low', 'Close', 'Volume']]
+            st.write(f"✅ {ticker}: {len(data)} hari perdagangan berhasil diambil")
         else:
             st.warning(f"Tidak ada data ditemukan untuk {ticker}")
 
     except Exception as e:
         st.error(f"Gagal mengambil data untuk {ticker}: {e}")
     
+    # Update progress bar
     progress_bar.progress((i + 1) / len(tickers))
 
 status_text.text("Selesai mengambil data.")
 
+# Jika ada data berhasil diambil
 if all_data:
-    st.success("✅ Data berhasil diambil!")
+    st.success("✅ Semua data berhasil diambil!")
 
     for ticker, data in all_data.items():
         st.subheader(f"📊 Data Historis {ticker}")
