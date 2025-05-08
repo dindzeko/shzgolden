@@ -37,7 +37,6 @@ def get_stock_data(ticker, end_date):
             
         return data
     except Exception as e:
-        st.error(f"Error mengambil data {ticker}: {str(e)}")
         return None
 
 # Fungsi menghitung RSI
@@ -80,7 +79,6 @@ def main():
     file_url = "https://docs.google.com/spreadsheets/d/1t6wgBIcPEUWMq40GdIH1GtZ8dvI9PZ2v/edit?usp=drive_link&ouid=106044501644618784207&rtpof=true&sd=true "
 
     # Load data
-    st.info("Memuat data dari Google Drive...")
     df = load_google_drive_excel(file_url)
     if df is None or 'Ticker' not in df.columns:
         st.error("Gagal memuat data atau kolom 'Ticker' tidak ada")
@@ -137,15 +135,11 @@ def main():
         else:
             st.info("❌ Tidak ada saham yang memenuhi kriteria Golden Cross")
 
-        # Tampilkan ticker yang gagal (opsional)
-        if failed_tickers:
-            st.subheader("⚠️ Ticker yang Gagal Mendapatkan Data:")
-            st.write(", ".join(failed_tickers))
-
         # Tampilkan data khusus BBCA
         st.subheader("📊 Analisis Khusus BBCA")
         if bbca_data is not None:
             golden_cross, ma50, ma100, rsi = check_signals(bbca_data)
+            
             st.write(f"MA50 Terakhir: {round(ma50, 2)}")
             st.write(f"MA100 Terakhir: {round(ma100, 2)}")
             st.write(f"RSI(14): {round(rsi, 2) if rsi else 'N/A'}")
@@ -154,6 +148,15 @@ def main():
                 st.success("🎯 BBCA: Golden Cross terdeteksi!")
             else:
                 st.warning("❗ BBCA: Golden Cross tidak terdeteksi")
+            
+            # Tampilkan data mentah BBCA
+            st.markdown("### 📄 Data Historis BBCA yang Diambil:")
+            st.dataframe(bbca_data[['Open', 'High', 'Low', 'Close', 'Volume']].tail(20))  # tampilkan 20 hari terakhir
+            
+            # Opsional: simpan ke file CSV
+            bbca_data.to_csv("bbca_data_debug.csv")
+            st.info("✅ Data BBCA tersimpan sebagai `bbca_data_debug.csv`")
+            
         else:
             st.warning("⚠️ Tidak ada data untuk BBCA")
 
