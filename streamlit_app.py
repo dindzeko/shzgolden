@@ -9,7 +9,7 @@ st.markdown("Aplikasi ini mengambil data historis **150 hari terakhir** untuk ti
 st.markdown("- BBCA.JK (Bank Central Asia)\n- TLKM.JK (Telkom Indonesia)\n- SRTG.JK (Surya Toto Indonesia)")
 
 # Daftar ticker yang akan diambil datanya
-tickers = ["BBCA", "TLKM", "SRTG"]
+tickers = ["BBCA.JK", "TLKM.JK", "SRTG.JK"]
 
 # Tanggal mulai dan akhir
 end_date = datetime.today()
