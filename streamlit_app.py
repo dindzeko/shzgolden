@@ -2,9 +2,8 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
-import numpy as np
 
-# Fungsi untuk membaca file Excel dari Google Drive
+# Fungsi untuk membaca data dari Google Drive (file Excel)
 def load_google_drive_excel(file_url):
     try:
         # Bersihkan URL dari spasi atau karakter tidak valid
@@ -18,7 +17,7 @@ def load_google_drive_excel(file_url):
         # Ekstrak file ID dengan aman
         file_id = file_url.split("/d/")[1].split("/")[0]
 
-        # Buat URL download langsung tanpa spasi berlebih
+        # Buat URL download langsung TANPA spasi berlebih
         download_url = f"https://drive.google.com/uc?export=download&id= {file_id}"
 
         # Baca file Excel menggunakan pandas dengan engine openpyxl
@@ -43,85 +42,72 @@ def load_google_drive_excel(file_url):
 def get_stock_data(ticker, end_date):
     try:
         stock = yf.Ticker(f"{ticker}.JK")
+        # Ambil data selama 30 hari sebelum tanggal analisis untuk memastikan mendapatkan 4 data perdagangan
+        start_date = end_date - timedelta(days=30)
+        start_date_str = start_date.strftime('%Y-%m-%d')
+        end_date_str = end_date.strftime('%Y-%m-%d')
+        data = stock.history(start=start_date_str, end=end_date_str)
         
-        # Perpanjang periode untuk MA100
-        start_date = end_date - timedelta(days=200)
-        
-        # Tambahkan 1 hari ke end_date agar inklusif
-        end_date_adj = end_date + timedelta(days=1)
-
-        data = stock.history(
-            start=start_date.strftime('%Y-%m-%d'),
-            end=end_date_adj.strftime('%Y-%m-%d')
-        )
-
-        # Pastikan cukup data untuk MA100
-        if len(data) < 100:
+        # Filter hanya 4 data terakhir
+        if len(data) >= 4:
+            data = data.tail(4)
+        else:
+            st.warning(f"Not enough trading data for {ticker} in the given date range.")
             return None
-
-        # Hitung Moving Average
-        data['MA50'] = data['Close'].rolling(window=50).mean()
-        data['MA100'] = data['Close'].rolling(window=100).mean()
-
-        # Hitung RSI(14) dengan metode Wilder’s smoothing
-        delta = data['Close'].diff()
-        gain = delta.where(delta > 0, 0)
-        loss = -delta.where(delta < 0, 0)
-
-        avg_gain = gain.ewm(alpha=1/14, adjust=False).mean()
-        avg_loss = loss.ewm(alpha=1/14, adjust=False).mean()
-
-        # Hindari pembagian nol
-        avg_loss = avg_loss.replace(0, np.finfo(float).eps)
-
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        data['RSI'] = rsi
-
-        return data.tail(5)  # Lebih banyak konteks
+        
+        return data
     except Exception as e:
-        st.warning(f"Error fetching data for {ticker}: {str(e)}")
+        st.error(f"Error fetching data for {ticker}: {str(e)}")
         return None
 
-# Fungsi mendeteksi Golden Cross dan ambil RSI + status
-def detect_golden_cross_and_rsi(data):
-    if len(data) >= 3:
-        ma50 = data['MA50'][-3:]
-        ma100 = data['MA100'][-3:]
+# Fungsi untuk mendeteksi pola berdasarkan 4 candle
+def detect_pattern(data):
+    if len(data) == 4:
+        # Candle 1: Bullish dengan body besar
+        candle1 = data.iloc[0]
+        is_candle1_bullish = candle1['Close'] > candle1['Open']
+        is_candle1_large_body = (candle1['Close'] - candle1['Open']) > 0.02 * candle1['Open']  # Body besar > 2%
 
-        # Deteksi crossover dalam 3 hari terakhir
-        crossover = False
-        for i in range(1, len(ma50)):
-            if ma50.iloc[i-1] <= ma100.iloc[i-1] and ma50.iloc[i] > ma100.iloc[i]:
-                crossover = True
-                break
+        # Candle 2: Bearish dan ditutup lebih rendah dari candle 1
+        candle2 = data.iloc[1]
+        is_candle2_bearish = candle2['Close'] < candle2['Open']
+        is_candle2_lower_than_candle1 = candle2['Close'] < candle1['Close']
 
-        last_close = data['Close'][-1]
-        last_rsi = data['RSI'][-1]
+        # Candle 3: Bearish
+        candle3 = data.iloc[2]
+        is_candle3_bearish = candle3['Close'] < candle3['Open']
 
-        # Hanya cek kondisi crossover
-        golden_cross = crossover
+        # Candle 4: Bearish
+        candle4 = data.iloc[3]
+        is_candle4_bearish = candle4['Close'] < candle4['Open']
 
-        # Tentukan status RSI
-        rsi_status = "Neutral"
-        if pd.notna(last_rsi):
-            if last_rsi > 70:
-                rsi_status = "Overbought"
-            elif last_rsi < 30:
-                rsi_status = "Oversold"
+        # Pastikan pola muncul di tren naik (harga candle 4 lebih rendah dari candle 1)
+        is_uptrend = candle4['Close'] < candle1['Close']
 
-        return golden_cross, last_rsi, rsi_status
-    return False, None, "N/A"
+        # Pastikan close candle 2 > close candle 3 > close candle 4
+        is_close_sequence = candle2['Close'] > candle3['Close'] > candle4['Close']
+
+        # Semua kondisi harus terpenuhi
+        return (
+            is_candle1_bullish and
+            is_candle1_large_body and
+            is_candle2_bearish and
+            is_candle2_lower_than_candle1 and
+            is_candle3_bearish and
+            is_candle4_bearish and
+            is_uptrend and
+            is_close_sequence
+        )
+    return False
 
 # Main function
 def main():
-    st.title("Stock Screening - Golden Cross + RSI")
+    st.title("Stock Screening - 4 Candle ")
 
-    file_url = st.text_input(
-        "Google Drive Excel URL",
-        value="https://docs.google.com/spreadsheets/d/1t6wgBIcPEUWMq40GdIH1GtZ8dvI9PZ2v/edit?usp=drive_link&ouid=106044501644618784207&rtpof=true&sd=true "
-    )
+    # URL file Excel di Google Drive
+    file_url = "https://docs.google.com/spreadsheets/d/1t6wgBIcPEUWMq40GdIH1GtZ8dvI9PZ2v/edit?usp=drive_link&ouid=106044501644618784207&rtpof=true&sd=true "
 
+    # Load data dari Google Drive
     st.info("Loading data from Google Drive...")
     df = load_google_drive_excel(file_url)
     if df is None or 'Ticker' not in df.columns:
@@ -133,47 +119,50 @@ def main():
 
     analysis_date = st.date_input("Analysis Date", value=datetime.today())
 
+    # Analyze button
     if st.button("Analyze Stocks"):
         results = []
         progress_bar = st.progress(0)
-        progress_text = st.empty()
+        progress_text = st.empty()  # Placeholder untuk menampilkan persentase
 
+        # Variabel untuk menyimpan data BBCA
         bbc_data = None
 
         for i, ticker in enumerate(tickers):
             data = get_stock_data(ticker, analysis_date)
 
-            if ticker == "BBCA" and data is not None:
-                bbc_data = data
+            # Debugging untuk ticker BBCA
+            if ticker == "BBCA":
+                if data is not None and not data.empty:
+                    bbc_data = data  # Simpan data BBCA
 
-            if data is not None and not data[['MA50', 'MA100']].isna().all().all():
-                golden_cross, rsi_value, rsi_status = detect_golden_cross_and_rsi(data)
-
-                if golden_cross:
+            if data is not None and not data.empty:
+                if detect_pattern(data):
+                    # Simpan hasil saham yang memenuhi kriteria
                     results.append({
                         "Ticker": ticker,
-                        "Last Close": round(data['Close'][-1], 2),
-                        "Signal": "Golden Cross",
-                        "RSI (14)": round(rsi_value, 2) if pd.notna(rsi_value) else "N/A",
-                        "RSI Status": rsi_status
+                        "Last Close": data['Close'][-1],
+                        "Pattern Detected": "unconfirmed Mathold"
                     })
 
+            # Hitung persentase kemajuan
             progress = (i + 1) / total_tickers
             progress_bar.progress(progress)
-            progress_text.text(f"Progress: {int(progress * 100)}%")
+            progress_text.text(f"Progress: {int(progress * 100)}%")  # Tampilkan persentase
 
+        # Display results
         if results:
-            st.subheader("Results: Stocks with Golden Cross")
+            st.subheader("Results: Stocks Meeting Criteria")
             results_df = pd.DataFrame(results)
             st.dataframe(results_df)
         else:
-            st.info("No stocks match the Golden Cross pattern.")
+            st.info("No stocks match the pattern.")
 
+        # Bagian terpisah untuk menampilkan data BBCA
         st.subheader("Separate Result for BBCA")
         if bbc_data is not None and not bbc_data.empty:
             st.write("Data Retrieved for BBCA:")
-            st.dataframe(bbc_data[['Close', 'MA50', 'MA100', 'RSI']])
-            st.line_chart(bbc_data[['Close', 'MA50', 'MA100']])
+            st.dataframe(bbc_data)  # Menampilkan data BBCA dalam bagian terpisah
         else:
             st.warning("No data retrieved for BBCA.")
 
