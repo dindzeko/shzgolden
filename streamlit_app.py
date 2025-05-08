@@ -6,18 +6,33 @@ from datetime import datetime, timedelta
 # Fungsi untuk membaca file Excel dari Google Drive
 def load_google_drive_excel(file_url):
     try:
+        # Bersihkan URL dari spasi atau karakter tidak valid
+        file_url = file_url.strip()
+
+        # Validasi format URL
+        if "/d/" not in file_url:
+            st.error("Invalid Google Drive URL. Make sure it's a 'sharing' link.")
+            return None
+
+        # Ekstrak file ID dengan aman
         file_id = file_url.split("/d/")[1].split("/")[0]
+
+        # Buat URL download langsung tanpa spasi berlebih
         download_url = f"https://drive.google.com/uc?export=download&id= {file_id}"
+
+        # Baca file Excel menggunakan pandas dengan engine openpyxl
         df = pd.read_excel(download_url, engine='openpyxl')
-        
+
+        # Periksa apakah kolom 'Ticker' ada di file Excel
         if 'Ticker' not in df.columns:
             st.error("The 'Ticker' column is missing in the Excel file.")
             return None
-        
+
+        # Informasi keberhasilan pembacaan file
         st.success(f"Successfully loaded data from Google Drive!")
         st.info(f"Number of rows read: {len(df)}")
         st.info(f"Columns in the Excel file: {', '.join(df.columns)}")
-        
+
         return df
     except Exception as e:
         st.error(f"Error loading Excel file from Google Drive: {e}")
@@ -29,10 +44,10 @@ def get_stock_data(ticker, end_date):
         stock = yf.Ticker(f"{ticker}.JK")
         start_date = end_date - timedelta(days=180)  # Ambil 6 bulan data
         data = stock.history(start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'))
-        
+
         if len(data) < 50:
             return None
-        
+
         # Hitung Moving Average
         data['MA50'] = data['Close'].rolling(window=50).mean()
         data['MA100'] = data['Close'].rolling(window=100).mean()
@@ -86,7 +101,10 @@ def detect_golden_cross_and_rsi(data):
 def main():
     st.title("Stock Screening - Golden Cross + RSI")
 
-    file_url = "https://docs.google.com/spreadsheets/d/1t6wgBIcPEUWMq40GdIH1GtZ8dvI9PZ2v/edit?usp=drive_link&ouid=106044501644618784207&rtpof=true&sd=true "
+    file_url = st.text_input(
+        "Google Drive Excel URL",
+        value="https://docs.google.com/spreadsheets/d/1t6wgBIcPEUWMq40GdIH1GtZ8dvI9PZ2v/edit?usp=drive_link&ouid=106044501644618784207&rtpof=true&sd=true "
+    )
 
     st.info("Loading data from Google Drive...")
     df = load_google_drive_excel(file_url)
