@@ -8,51 +8,46 @@ st.title("📥 Pengambilan Data Historis Saham BEI")
 st.markdown("Aplikasi ini mengambil data historis **150 hari terakhir** untuk ticker berikut:")
 st.markdown("- BBCA.JK (Bank Central Asia)\n- TLKM.JK (Telkom Indonesia)\n- SRTG.JK (Surya Toto Indonesia)")
 
-# Daftar ticker yang akan diambil datanya
+# Daftar ticker lengkap dengan .JK
 tickers = ["BBCA.JK", "TLKM.JK", "SRTG.JK"]
 
-# Tanggal mulai dan akhir
+# Rentang tanggal
 end_date = datetime.today()
-start_date = end_date - timedelta(days=150)  # ~150 hari ke belakang
+start_date = end_date - timedelta(days=150)
 
-all_data = {}  # Dictionary untuk menyimpan semua data
+all_data = {}  # Menyimpan data untuk setiap ticker
 
 progress_bar = st.progress(0)
 status_text = st.empty()
 
 for i, ticker in enumerate(tickers):
     try:
-        full_ticker = f"{ticker}.JK"  # Tambahkan .JK untuk pasar BEI
-        status_text.text(f"Mengambil data untuk {full_ticker}...")
-
-        # Ambil data dari Yahoo Finance
-        data = yf.download(full_ticker, start=start_date, end=end_date)
+        status_text.text(f"Mengambil data untuk {ticker}...")
+        data = yf.download(ticker, start=start_date, end=end_date)
 
         if not data.empty:
             all_data[ticker] = data[['Open', 'High', 'Low', 'Close', 'Volume']]
         else:
-            st.warning(f"Tidak ada data ditemukan untuk {full_ticker}")
+            st.warning(f"Tidak ada data ditemukan untuk {ticker}")
 
     except Exception as e:
         st.error(f"Gagal mengambil data untuk {ticker}: {e}")
     
-    # Update progress bar
     progress_bar.progress((i + 1) / len(tickers))
 
 status_text.text("Selesai mengambil data.")
 
-# Jika ada data berhasil diambil
 if all_data:
     st.success("✅ Data berhasil diambil!")
 
     for ticker, data in all_data.items():
-        st.subheader(f"📊 Data Historis {ticker}.JK")
+        st.subheader(f"📊 Data Historis {ticker}")
         st.dataframe(data.tail(20))  # Tampilkan 20 hari terakhir
 
         # Tombol download CSV
         csv = data.to_csv(index=True)
         st.download_button(
-            label=f"⬇️ Unduh data {ticker}.JK",
+            label=f"⬇️ Unduh data {ticker}",
             data=csv,
             file_name=f"{ticker}_historical_data.csv",
             mime="text/csv"
