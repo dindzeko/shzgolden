@@ -1,151 +1,146 @@
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
+import yfinance as yf
+from datetime import datetime, timedelta
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+# Fungsi untuk membaca file Excel dari Google Drive
+def load_google_drive_excel(file_url):
+    try:
+        file_id = file_url.split("/d/")[1].split("/")[0]
+        download_url = f"https://drive.google.com/uc?export=download&id= {file_id}"
+        df = pd.read_excel(download_url, engine='openpyxl')
+        
+        if 'Ticker' not in df.columns:
+            st.error("The 'Ticker' column is missing in the Excel file.")
+            return None
+        
+        st.success(f"Successfully loaded data from Google Drive!")
+        st.info(f"Number of rows read: {len(df)}")
+        st.info(f"Columns in the Excel file: {', '.join(df.columns)}")
+        
+        return df
+    except Exception as e:
+        st.error(f"Error loading Excel file from Google Drive: {e}")
+        return None
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+# Fungsi untuk mengambil data saham
+def get_stock_data(ticker, end_date):
+    try:
+        stock = yf.Ticker(f"{ticker}.JK")
+        start_date = end_date - timedelta(days=180)  # Ambil 6 bulan data
+        data = stock.history(start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'))
+        
+        if len(data) < 50:
+            return None
+        
+        # Hitung Moving Average
+        data['MA50'] = data['Close'].rolling(window=50).mean()
+        data['MA100'] = data['Close'].rolling(window=100).mean()
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+        # Hitung RSI(14)
+        delta = data['Close'].diff()
+        gain = delta.where(delta > 0, 0)
+        loss = -delta.where(delta < 0, 0)
+        avg_gain = gain.rolling(window=14).mean()
+        avg_loss = loss.rolling(window=14).mean()
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        data['RSI'] = rsi
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+        return data.tail(2)  # Ambil 2 hari terakhir untuk deteksi crossing
+    except Exception as e:
+        st.warning(f"Error fetching data for {ticker}: {str(e)}")
+        return None
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+# Fungsi mendeteksi Golden Cross dan ambil RSI + status
+def detect_golden_cross_and_rsi(data):
+    if len(data) >= 2:
+        prev_ma50 = data.iloc[-2]['MA50']
+        curr_ma50 = data.iloc[-1]['MA50']
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+        prev_ma100 = data.iloc[-2]['MA100']
+        curr_ma100 = data.iloc[-1]['MA100']
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
+        last_close = data.iloc[-1]['Close']
+        last_rsi = data.iloc[-1]['RSI']
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
-
-    return gdp_df
-
-gdp_df = get_gdp_data()
-
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
-
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
-''
-
-cols = st.columns(4)
-
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
-
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
+        # Deteksi Golden Cross
+        golden_cross = (
+            prev_ma50 <= prev_ma100 and
+            curr_ma50 > curr_ma100 and
+            curr_ma50 > last_close * 0.99  # Harga tidak jauh di bawah MA50
         )
+
+        # Tentukan status RSI
+        rsi_status = "Neutral"
+        if pd.notna(last_rsi):
+            if last_rsi > 70:
+                rsi_status = "Overbought"
+            elif last_rsi < 30:
+                rsi_status = "Oversold"
+
+        return golden_cross, last_rsi, rsi_status
+    return False, None, "N/A"
+
+# Main function
+def main():
+    st.title("Stock Screening - Golden Cross + RSI")
+
+    file_url = "https://docs.google.com/spreadsheets/d/1t6wgBIcPEUWMq40GdIH1GtZ8dvI9PZ2v/edit?usp=drive_link&ouid=106044501644618784207&rtpof=true&sd=true "
+
+    st.info("Loading data from Google Drive...")
+    df = load_google_drive_excel(file_url)
+    if df is None or 'Ticker' not in df.columns:
+        st.error("Failed to load data or 'Ticker' column is missing.")
+        return
+
+    tickers = df['Ticker'].tolist()
+    total_tickers = len(tickers)
+
+    analysis_date = st.date_input("Analysis Date", value=datetime.today())
+
+    if st.button("Analyze Stocks"):
+        results = []
+        progress_bar = st.progress(0)
+        progress_text = st.empty()
+
+        bbc_data = None
+
+        for i, ticker in enumerate(tickers):
+            data = get_stock_data(ticker, analysis_date)
+
+            if ticker == "BBCA" and data is not None:
+                bbc_data = data
+
+            if data is not None and not data[['MA50', 'MA100']].isna().all().all():
+                golden_cross, rsi_value, rsi_status = detect_golden_cross_and_rsi(data)
+
+                if golden_cross:
+                    results.append({
+                        "Ticker": ticker,
+                        "Last Close": round(data['Close'][-1], 2),
+                        "Signal": "Golden Cross",
+                        "RSI (14)": round(rsi_value, 2) if pd.notna(rsi_value) else "N/A",
+                        "RSI Status": rsi_status
+                    })
+
+            progress = (i + 1) / total_tickers
+            progress_bar.progress(progress)
+            progress_text.text(f"Progress: {int(progress * 100)}%")
+
+        if results:
+            st.subheader("Results: Stocks with Golden Cross")
+            results_df = pd.DataFrame(results)
+            st.dataframe(results_df)
+        else:
+            st.info("No stocks match the Golden Cross pattern.")
+
+        st.subheader("Separate Result for BBCA")
+        if bbc_data is not None and not bbc_data.empty:
+            st.write("Data Retrieved for BBCA:")
+            st.dataframe(bbc_data[['Close', 'MA50', 'MA100', 'RSI']])
+        else:
+            st.warning("No data retrieved for BBCA.")
+
+if __name__ == "__main__":
+    main()
