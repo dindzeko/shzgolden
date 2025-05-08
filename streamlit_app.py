@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
+import numpy as np
 
 # Fungsi untuk membaca file Excel dari Google Drive
 def load_google_drive_excel(file_url):
@@ -42,49 +43,64 @@ def load_google_drive_excel(file_url):
 def get_stock_data(ticker, end_date):
     try:
         stock = yf.Ticker(f"{ticker}.JK")
-        start_date = end_date - timedelta(days=180)  # Ambil 6 bulan data
-        data = stock.history(start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'))
+        
+        # Perpanjang periode untuk MA100
+        start_date = end_date - timedelta(days=200)
+        
+        # Tambahkan 1 hari ke end_date agar inklusif
+        end_date_adj = end_date + timedelta(days=1)
 
-        if len(data) < 50:
+        data = stock.history(
+            start=start_date.strftime('%Y-%m-%d'),
+            end=end_date_adj.strftime('%Y-%m-%d')
+        )
+
+        # Pastikan cukup data untuk MA100
+        if len(data) < 100:
             return None
 
         # Hitung Moving Average
         data['MA50'] = data['Close'].rolling(window=50).mean()
         data['MA100'] = data['Close'].rolling(window=100).mean()
 
-        # Hitung RSI(14)
+        # Hitung RSI(14) dengan metode Wilder’s smoothing
         delta = data['Close'].diff()
         gain = delta.where(delta > 0, 0)
         loss = -delta.where(delta < 0, 0)
-        avg_gain = gain.rolling(window=14).mean()
-        avg_loss = loss.rolling(window=14).mean()
+
+        avg_gain = gain.ewm(alpha=1/14, adjust=False).mean()
+        avg_loss = loss.ewm(alpha=1/14, adjust=False).mean()
+
+        # Hindari pembagian nol
+        avg_loss = avg_loss.replace(0, np.finfo(float).eps)
+
         rs = avg_gain / avg_loss
         rsi = 100 - (100 / (1 + rs))
         data['RSI'] = rsi
 
-        return data.tail(2)  # Ambil 2 hari terakhir untuk deteksi crossing
+        return data.tail(5)  # Lebih banyak konteks
     except Exception as e:
         st.warning(f"Error fetching data for {ticker}: {str(e)}")
         return None
 
 # Fungsi mendeteksi Golden Cross dan ambil RSI + status
 def detect_golden_cross_and_rsi(data):
-    if len(data) >= 2:
-        prev_ma50 = data.iloc[-2]['MA50']
-        curr_ma50 = data.iloc[-1]['MA50']
+    if len(data) >= 3:
+        ma50 = data['MA50'][-3:]
+        ma100 = data['MA100'][-3:]
 
-        prev_ma100 = data.iloc[-2]['MA100']
-        curr_ma100 = data.iloc[-1]['MA100']
+        # Deteksi crossover dalam 3 hari terakhir
+        crossover = False
+        for i in range(1, len(ma50)):
+            if ma50.iloc[i-1] <= ma100.iloc[i-1] and ma50.iloc[i] > ma100.iloc[i]:
+                crossover = True
+                break
 
-        last_close = data.iloc[-1]['Close']
-        last_rsi = data.iloc[-1]['RSI']
+        last_close = data['Close'][-1]
+        last_rsi = data['RSI'][-1]
 
-        # Deteksi Golden Cross
-        golden_cross = (
-            prev_ma50 <= prev_ma100 and
-            curr_ma50 > curr_ma100 and
-            curr_ma50 > last_close * 0.99  # Harga tidak jauh di bawah MA50
-        )
+        # Hanya cek kondisi crossover
+        golden_cross = crossover
 
         # Tentukan status RSI
         rsi_status = "Neutral"
@@ -157,6 +173,7 @@ def main():
         if bbc_data is not None and not bbc_data.empty:
             st.write("Data Retrieved for BBCA:")
             st.dataframe(bbc_data[['Close', 'MA50', 'MA100', 'RSI']])
+            st.line_chart(bbc_data[['Close', 'MA50', 'MA100']])
         else:
             st.warning("No data retrieved for BBCA.")
 
