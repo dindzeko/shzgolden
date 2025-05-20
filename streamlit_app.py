@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 def load_google_sheet(sheet_url):
     try:
         file_id = sheet_url.split("/d/")[1].split("/")[0]
-        export_url = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=csv"
+        export_url = f"https://docs.google.com/spreadsheets/d/ {file_id}/export?format=csv"
         df = pd.read_csv(export_url)
 
         if 'Ticker' not in df.columns:
@@ -61,13 +61,14 @@ def detect_volume_up_two_days(data):
         return False
     return data['Volume'].iloc[-1] > data['Volume'].iloc[-2]
 
+# 🔁 Golden Cross diganti jadi MA5 x MA15
 def detect_golden_cross(data):
-    if len(data) < 50:
+    if len(data) < 15:  # MA15 butuh minimal 15 data
         return False
     data = data.copy()
-    data['MA20'] = data['Close'].rolling(20).mean()
-    data['MA50'] = data['Close'].rolling(50).mean()
-    return data['MA20'].iloc[-2] < data['MA50'].iloc[-2] and data['MA20'].iloc[-1] > data['MA50'].iloc[-1]
+    data['MA5'] = data['Close'].rolling(5).mean()
+    data['MA15'] = data['Close'].rolling(15).mean()
+    return data['MA5'].iloc[-2] < data['MA15'].iloc[-2] and data['MA5'].iloc[-1] > data['MA15'].iloc[-1]
 
 # Aplikasi utama
 def main():
@@ -76,7 +77,7 @@ def main():
     # Input pengguna
     sheet_url = st.text_input(
         "Masukkan URL Google Sheets",
-        value="https://docs.google.com/spreadsheets/d/1t6wgBIcPEUWMq40GdIH1GtZ8dvI9PZ2v/edit?usp=sharing"
+        value="https://docs.google.com/spreadsheets/d/1t6wgBIcPEUWMq40GdIH1GtZ8dvI9PZ2v/edit?usp=sharing "
     )
     end_analysis_date = st.date_input("Tanggal Akhir Analisis", value=datetime.today())
 
@@ -122,7 +123,7 @@ def main():
         for i, ticker in enumerate(tickers):
             data = get_stock_data(ticker, end_analysis_date)
 
-            if data is None or len(data) < 50:
+            if data is None or len(data) < 15:  # Cukup 15 hari untuk MA15
                 progress_bar.progress((i + 1) / total)
                 continue
 
