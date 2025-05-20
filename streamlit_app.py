@@ -62,12 +62,12 @@ def detect_volume_up_two_days(data):
     return data['Volume'].iloc[-1] > data['Volume'].iloc[-2]
 
 def detect_golden_cross(data):
-    if len(data) < 50:
+    if len(data) < 15:
         return False
     data = data.copy()
-    data['MA20'] = data['Close'].rolling(20).mean()
-    data['MA50'] = data['Close'].rolling(50).mean()
-    return data['MA20'].iloc[-2] < data['MA50'].iloc[-2] and data['MA20'].iloc[-1] > data['MA50'].iloc[-1]
+    data['MA5'] = data['Close'].rolling(5).mean()
+    data['MA15'] = data['Close'].rolling(15).mean()
+    return data['MA5'].iloc[-2] < data['MA15'].iloc[-2] and data['MA5'].iloc[-1] > data['MA15'].iloc[-1]
 
 # Aplikasi utama
 def main():
@@ -80,13 +80,12 @@ def main():
 
     end_analysis_date = st.date_input("Tanggal Akhir Analisis", value=datetime.today())
 
-    # Checklist kriteria analisa
-    st.markdown("### Pilih Kriteria Analisa:")
+    st.subheader("Pilih Kriteria Analisa:")
     opt_rsi = st.checkbox("RSI Oversold")
     opt_macd = st.checkbox("MACD Bullish Crossover")
     opt_gc = st.checkbox("Golden Cross")
     opt_three = st.checkbox("Three of Kind (RSI + MACD + Volume)")
-    opt_complete = st.checkbox("Lengkap (Golden Cross + RSI + MACD + Volume)")
+    opt_all = st.checkbox("Lengkap (Golden Cross + RSI + MACD + Volume)")
 
     if st.button("Mulai Analisa"):
         df = load_google_sheet(sheet_url)
@@ -104,7 +103,7 @@ def main():
         for i, ticker in enumerate(tickers):
             data = get_stock_data(ticker, end_analysis_date)
 
-            if data is None or len(data) < 50:
+            if data is None or len(data) < 20:
                 progress_bar.progress((i + 1) / total)
                 continue
 
@@ -113,31 +112,30 @@ def main():
             match_vol = detect_volume_up_two_days(data)
             match_gc = detect_golden_cross(data)
 
-            matched = []
-            if match_rsi:
-                matched.append("RSI Oversold")
-            if match_macd:
-                matched.append("MACD Bullish")
-            if match_vol:
-                matched.append("Volume Naik 2 Hari")
-            if match_gc:
-                matched.append("Golden Cross")
+            show = False
 
-            include = False
-
-            # Evaluasi checklist
             if opt_rsi and match_rsi:
-                include = True
+                show = True
             if opt_macd and match_macd:
-                include = True
+                show = True
             if opt_gc and match_gc:
-                include = True
-            if opt_three and all([match_rsi, match_macd, match_vol]):
-                include = True
-            if opt_complete and all([match_gc, match_rsi, match_macd, match_vol]):
-                include = True
+                show = True
+            if opt_three and match_rsi and match_macd and match_vol:
+                show = True
+            if opt_all and match_rsi and match_macd and match_vol and match_gc:
+                show = True
 
-            if include:
+            if show:
+                matched = []
+                if match_rsi:
+                    matched.append("RSI Oversold")
+                if match_macd:
+                    matched.append("MACD Bullish")
+                if match_vol:
+                    matched.append("Volume Naik 2 Hari")
+                if match_gc:
+                    matched.append("Golden Cross")
+                
                 results.append({
                     "Ticker": ticker,
                     "Last Close": round(data['Close'].iloc[-1], 2),
