@@ -57,37 +57,72 @@ def detect_macd_bullish_crossover(data):
     return macd.iloc[-2] < signal.iloc[-2] and macd.iloc[-1] > signal.iloc[-1]
 
 def detect_volume_up_two_days(data):
-    if len(data) < 2:
+    if len(data) < 20:
         return False
-    return data['Volume'].iloc[-1] > data['Volume'].iloc[-2]
+
+    data = data.copy()
+    data['MA20'] = data['Close'].rolling(20).mean()
+
+    avg_volume_10d = data['Volume'].iloc[-11:-1].mean()
+    volume_h1 = data['Volume'].iloc[-1]
+    volume_h2 = data['Volume'].iloc[-2]
+    close_h1 = data['Close'].iloc[-1]
+    ma20_h1 = data['MA20'].iloc[-1]
+
+    if pd.isna(ma20_h1):
+        return False
+
+    if (volume_h1 > 1.5 * avg_volume_10d and
+        volume_h2 > 1.3 * avg_volume_10d and
+        close_h1 > ma20_h1):
+        return True
+    return False
 
 def detect_golden_cross(data):
-    if len(data) < 15:
+    if len(data) < 50:
         return False
     data = data.copy()
-    data['MA5'] = data['Close'].rolling(5).mean()
-    data['MA15'] = data['Close'].rolling(15).mean()
-    return data['MA5'].iloc[-2] < data['MA15'].iloc[-2] and data['MA5'].iloc[-1] > data['MA15'].iloc[-1]
+    data['MA20'] = data['Close'].rolling(20).mean()
+    data['MA50'] = data['Close'].rolling(50).mean()
+    return data['MA20'].iloc[-2] < data['MA50'].iloc[-2] and data['MA20'].iloc[-1] > data['MA50'].iloc[-1]
 
 # Aplikasi utama
 def main():
     st.title("📊 Analisa Saham - Google Sheets + Yahoo Finance")
 
+    # Input pengguna
     sheet_url = st.text_input(
         "Masukkan URL Google Sheets",
         value="https://docs.google.com/spreadsheets/d/1t6wgBIcPEUWMq40GdIH1GtZ8dvI9PZ2v/edit?usp=sharing"
     )
-
     end_analysis_date = st.date_input("Tanggal Akhir Analisis", value=datetime.today())
 
-    st.subheader("Pilih Kriteria Analisa:")
-    opt_rsi = st.checkbox("RSI Oversold")
-    opt_macd = st.checkbox("MACD Bullish Crossover")
-    opt_gc = st.checkbox("Golden Cross")
-    opt_three = st.checkbox("Three of Kind (RSI + MACD + Volume)")
-    opt_all = st.checkbox("Lengkap (Golden Cross + RSI + MACD + Volume)")
+    # Checkbox untuk pemilihan indikator
+    st.sidebar.header("Pilih Indikator Analisis")
+    rsi_check = st.sidebar.checkbox("RSI Oversold", value=True)
+    macd_check = st.sidebar.checkbox("MACD Bullish", value=True)
+    volume_check = st.sidebar.checkbox("Volume Melejit (MA20 Confirmed)", value=True)
+    golden_cross_check = st.sidebar.checkbox("Golden Cross")
+    three_of_kind_check = st.sidebar.checkbox("Three of Kind (RSI+MACD+Volume)", value=False)
+    lengkap_check = st.sidebar.checkbox("Lengkap (Semua Indikator)", value=False)
 
     if st.button("Mulai Analisa"):
+        # Validasi pilihan indikator
+        selected_indicators = []
+        if rsi_check: selected_indicators.append("RSI Oversold")
+        if macd_check: selected_indicators.append("MACD Bullish")
+        if volume_check: selected_indicators.append("Volume Melejit (MA20 Confirmed)")
+        if golden_cross_check: selected_indicators.append("Golden Cross")
+
+        if three_of_kind_check:
+            selected_indicators = ["RSI Oversold", "MACD Bullish", "Volume Melejit (MA20 Confirmed)"]
+        if lengkap_check:
+            selected_indicators = ["RSI Oversold", "MACD Bullish", "Volume Melejit (MA20 Confirmed)", "Golden Cross"]
+
+        if not selected_indicators:
+            st.error("Pilih minimal satu indikator untuk analisis!")
+            return
+
         df = load_google_sheet(sheet_url)
         if df is None:
             return
@@ -103,43 +138,25 @@ def main():
         for i, ticker in enumerate(tickers):
             data = get_stock_data(ticker, end_analysis_date)
 
-            if data is None or len(data) < 20:
+            if data is None or len(data) < 50:
                 progress_bar.progress((i + 1) / total)
                 continue
 
-            match_rsi = detect_rsi_oversold(data)
-            match_macd = detect_macd_bullish_crossover(data)
-            match_vol = detect_volume_up_two_days(data)
-            match_gc = detect_golden_cross(data)
+            matched = []
+            if detect_rsi_oversold(data):
+                matched.append("RSI Oversold")
+            if detect_macd_bullish_crossover(data):
+                matched.append("MACD Bullish")
+            if detect_volume_up_two_days(data):
+                matched.append("Volume Melejit (MA20 Confirmed)")
+            if detect_golden_cross(data):
+                matched.append("Golden Cross")
 
-            show = False
-
-            if opt_rsi and match_rsi:
-                show = True
-            if opt_macd and match_macd:
-                show = True
-            if opt_gc and match_gc:
-                show = True
-            if opt_three and match_rsi and match_macd and match_vol:
-                show = True
-            if opt_all and match_rsi and match_macd and match_vol and match_gc:
-                show = True
-
-            if show:
-                matched = []
-                if match_rsi:
-                    matched.append("RSI Oversold")
-                if match_macd:
-                    matched.append("MACD Bullish")
-                if match_vol:
-                    matched.append("Volume Naik 2 Hari")
-                if match_gc:
-                    matched.append("Golden Cross")
-                
+            if all(indicator in matched for indicator in selected_indicators):
                 results.append({
                     "Ticker": ticker,
                     "Last Close": round(data['Close'].iloc[-1], 2),
-                    "Matched": ", ".join(matched)
+                    "Indikator Terpenuhi": ", ".join(matched)
                 })
 
             progress = (i + 1) / total
