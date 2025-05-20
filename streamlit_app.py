@@ -3,54 +3,43 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
 
-# === Fungsi untuk membaca Google Sheet sebagai CSV ===
-def load_google_sheet_csv(sheet_url):
+# Fungsi untuk membaca Google Sheets
+def load_google_sheet(sheet_url):
     try:
-        # Ekstrak ID dari URL
-        if "/d/" not in sheet_url:
-            st.error("URL Google Sheet tidak valid.")
-            return None
-
-        sheet_id = sheet_url.split("/d/")[1].split("/")[0]
-        gid = "0"
-        if "gid=" in sheet_url:
-            gid = sheet_url.split("gid=")[-1].split("#")[0]
-
-        csv_url = f"https://docs.google.com/spreadsheets/d/ {sheet_id}/export?format=csv&gid={gid}"
-        df = pd.read_csv(csv_url)
+        file_id = sheet_url.split("/d/")[1].split("/")[0]
+        export_url = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=csv"
+        df = pd.read_csv(export_url)
 
         if 'Ticker' not in df.columns:
-            st.error("Kolom 'Ticker' tidak ditemukan di Google Sheet.")
+            st.error("Kolom 'Ticker' tidak ditemukan di Google Sheets.")
             return None
-
         return df
     except Exception as e:
-        st.error(f"❌ Gagal membaca Google Sheet: {e}")
+        st.error(f"Gagal membaca Google Sheet: {e}")
         return None
 
-# === Ambil data saham dari Yahoo Finance ===
+# Ambil data dari Yahoo Finance
 def get_stock_data(ticker, end_date):
-    start_date = end_date - timedelta(days=60)
     try:
-        data = yf.download(f"{ticker}.JK", start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'))
-        if data.empty or len(data) < 20:
-            return None
-        return data.tail(50)  # Hanya ambil 50 hari perdagangan terakhir
-    except Exception as e:
+        start_date = end_date - timedelta(days=90)
+        stock = yf.Ticker(f"{ticker}.JK")
+        data = stock.history(start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'))
+        return data.tail(50) if not data.empty else None
+    except Exception:
         return None
 
-# === Indikator Teknikal ===
-
+# Indikator teknikal
 def calculate_rsi(data, window=14):
     delta = data['Close'].diff()
-    gain = (delta.clip(lower=0)).rolling(window=window).mean()
+    gain = delta.clip(lower=0).rolling(window=window).mean()
     loss = (-delta.clip(upper=0)).rolling(window=window).mean()
     rs = gain / loss
-    return 100 - (100 / (1 + rs))
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.fillna(0)
 
 def detect_rsi_oversold(data):
     rsi = calculate_rsi(data)
-    if rsi.empty or rsi.isna().all():
+    if rsi.empty or pd.isna(rsi.iloc[-1]):
         return False
     return rsi.iloc[-1] < 30
 
@@ -62,12 +51,10 @@ def calculate_macd(data, fast=12, slow=26, signal=9):
     return macd, signal_line
 
 def detect_macd_bullish_crossover(data):
-    if len(data) < 2:
-        return False
     macd, signal = calculate_macd(data)
-    if macd.empty or signal.empty:
+    if len(macd) < 2:
         return False
-    return (macd.iloc[-2] < signal.iloc[-2]) and (macd.iloc[-1] > signal.iloc[-1])
+    return macd.iloc[-2] < signal.iloc[-2] and macd.iloc[-1] > signal.iloc[-1]
 
 def detect_volume_up_two_days(data):
     if len(data) < 2:
@@ -77,79 +64,81 @@ def detect_volume_up_two_days(data):
 def detect_golden_cross(data):
     if len(data) < 50:
         return False
-    ma20 = data['Close'].rolling(20).mean()
-    ma50 = data['Close'].rolling(50).mean()
-    if ma20.empty or ma50.empty:
-        return False
-    return (ma20.iloc[-2] < ma50.iloc[-2]) and (ma20.iloc[-1] > ma50.iloc[-1])
+    data = data.copy()
+    data['MA20'] = data['Close'].rolling(20).mean()
+    data['MA50'] = data['Close'].rolling(50).mean()
+    return data['MA20'].iloc[-2] < data['MA50'].iloc[-2] and data['MA20'].iloc[-1] > data['MA50'].iloc[-1]
 
-# === Streamlit App ===
+# Aplikasi utama
 def main():
-    st.title("📊 Analisa Saham dari Google Sheets")
-    st.markdown("🚀 Input URL Google Sheet dan tanggal akhir analisa. Data saham akan dianalisis selama 2 bulan terakhir (maksimal 50 hari perdagangan).")
+    st.title("📊 Analisa Saham - Google Sheets + Yahoo Finance")
 
-    # Input
-    sheet_url = st.text_input("Masukkan URL Google Sheet", 
-        "https://docs.google.com/spreadsheets/d/1t6wgBIcPEUWMq40GdIH1GtZ8dvI9PZ2v/edit?gid=1445483445 ")
-    
-    end_date = st.date_input("Tanggal Akhir Analisis", value=datetime.today())
-    use_golden_cross = st.checkbox("Gunakan Filter Golden Cross", value=True)
+    sheet_url = st.text_input(
+        "Masukkan URL Google Sheets",
+        value="https://docs.google.com/spreadsheets/d/1t6wgBIcPEUWMq40GdIH1GtZ8dvI9PZ2v/edit?usp=sharing"
+    )
 
-    if st.button("🔍 Mulai Analisa"):
-        st.info("📥 Membaca data dari Google Sheet...")
-        df = load_google_sheet_csv(sheet_url)
+    end_analysis_date = st.date_input("Tanggal Akhir Analisis", value=datetime.today())
+    use_golden_cross = st.checkbox("Aktifkan Filter Golden Cross", value=True)
 
+    if st.button("Mulai Analisa"):
+        df = load_google_sheet(sheet_url)
         if df is None:
             return
 
-        tickers = df['Ticker'].dropna().astype(str).tolist()
+        tickers = df['Ticker'].dropna().unique().tolist()
         total = len(tickers)
+        st.info(f"🔍 Menganalisis {total} saham...")
 
-        progress = st.progress(0)
-        status = st.empty()
-        hasil = []
+        progress_bar = st.progress(0)
+        progress_text = st.empty()
+        results = []
 
         for i, ticker in enumerate(tickers):
-            data = get_stock_data(ticker, end_date)
-            if data is None or len(data) < 20:
+            data = get_stock_data(ticker, end_analysis_date)
+
+            if data is None or len(data) < 50:
+                progress_bar.progress((i + 1) / total)
                 continue
 
-            criteria = []
-            wajib = ["RSI Oversold", "MACD Bullish", "Volume Naik 2 Hari"]
-
-            if use_golden_cross and detect_golden_cross(data):
-                criteria.append("Golden Cross")
+            matched = []
             if detect_rsi_oversold(data):
-                criteria.append("RSI Oversold")
+                matched.append("RSI Oversold")
             if detect_macd_bullish_crossover(data):
-                criteria.append("MACD Bullish")
+                matched.append("MACD Bullish")
             if detect_volume_up_two_days(data):
-                criteria.append("Volume Naik 2 Hari")
+                matched.append("Volume Naik 2 Hari")
+            if use_golden_cross and detect_golden_cross(data):
+                matched.append("Golden Cross")
 
-            if all(k in criteria for k in wajib):
-                if not use_golden_cross or "Golden Cross" in criteria:
-                    hasil.append({
+            wajib = {"RSI Oversold", "MACD Bullish", "Volume Naik 2 Hari"}
+            if wajib.issubset(set(matched)):
+                if use_golden_cross and "Golden Cross" in matched or not use_golden_cross:
+                    results.append({
                         "Ticker": ticker,
                         "Last Close": round(data['Close'].iloc[-1], 2),
-                        "Criteria": ", ".join(criteria)
+                        "Matched": ", ".join(matched)
                     })
 
-            progress.progress((i + 1) / total)
-            status.text(f"Proses: {i + 1}/{total} saham")
+            progress = (i + 1) / total
+            progress_bar.progress(progress)
+            progress_text.text(f"Progress: {int(progress * 100)}%")
 
-        if hasil:
+        if results:
             st.success("✅ Saham yang memenuhi kriteria:")
-            st.dataframe(pd.DataFrame(hasil))
+            st.dataframe(pd.DataFrame(results))
         else:
             st.warning("❌ Tidak ada saham yang memenuhi kriteria.")
 
-        # === Cek BBCA sebagai contoh ===
-        st.subheader("📌 Contoh Saham: BBCA")
-        bbca_data = get_stock_data("BBCA", end_date)
+        # Analisis khusus BBCA
+        st.subheader("🔎 Cek Data BBCA")
+        bbca_data = get_stock_data("BBCA", end_analysis_date)
+
         if bbca_data is not None and not bbca_data.empty:
-            st.dataframe(bbca_data[['Open', 'High', 'Low', 'Close', 'Volume']].tail(10))
+            st.write(f"📊 Menampilkan {len(bbca_data)} hari terakhir data BBCA")
+            st.dataframe(bbca_data.tail(50))
         else:
-            st.error("Gagal mengambil data BBCA.")
+            st.error("❌ Gagal mengambil data BBCA.")
 
 if __name__ == "__main__":
     main()
