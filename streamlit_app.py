@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 def load_google_sheet(sheet_url):
     try:
         file_id = sheet_url.split("/d/")[1].split("/")[0]
-        export_url = f"https://docs.google.com/spreadsheets/d/ {file_id}/export?format=csv"
+        export_url = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=csv"
         df = pd.read_csv(export_url)
 
         if 'Ticker' not in df.columns:
@@ -61,53 +61,34 @@ def detect_volume_up_two_days(data):
         return False
     return data['Volume'].iloc[-1] > data['Volume'].iloc[-2]
 
-# 🔁 Golden Cross diganti jadi MA5 x MA15
 def detect_golden_cross(data):
-    if len(data) < 15:  # MA15 butuh minimal 15 data
+    if len(data) < 50:
         return False
     data = data.copy()
-    data['MA5'] = data['Close'].rolling(5).mean()
-    data['MA15'] = data['Close'].rolling(15).mean()
-    return data['MA5'].iloc[-2] < data['MA15'].iloc[-2] and data['MA5'].iloc[-1] > data['MA15'].iloc[-1]
+    data['MA20'] = data['Close'].rolling(20).mean()
+    data['MA50'] = data['Close'].rolling(50).mean()
+    return data['MA20'].iloc[-2] < data['MA50'].iloc[-2] and data['MA20'].iloc[-1] > data['MA50'].iloc[-1]
 
 # Aplikasi utama
 def main():
     st.title("📊 Analisa Saham - Google Sheets + Yahoo Finance")
 
-    # Input pengguna
     sheet_url = st.text_input(
         "Masukkan URL Google Sheets",
-        value="https://docs.google.com/spreadsheets/d/1t6wgBIcPEUWMq40GdIH1GtZ8dvI9PZ2v/edit?usp=sharing "
+        value="https://docs.google.com/spreadsheets/d/1t6wgBIcPEUWMq40GdIH1GtZ8dvI9PZ2v/edit?usp=sharing"
     )
+
     end_analysis_date = st.date_input("Tanggal Akhir Analisis", value=datetime.today())
 
-    # Checkbox untuk pemilihan indikator
-    st.sidebar.header("Pilih Indikator Analisis")
-    rsi_check = st.sidebar.checkbox("RSI Oversold", value=True)
-    macd_check = st.sidebar.checkbox("MACD Bullish", value=True)
-    volume_check = st.sidebar.checkbox("Volume Naik 2 Hari", value=True)
-    golden_cross_check = st.sidebar.checkbox("Golden Cross")
-    three_of_kind_check = st.sidebar.checkbox("Three of Kind (RSI+MACD+Volume)")
-    lengkap_check = st.sidebar.checkbox("Lengkap (Semua Indikator)")
+    # Checklist kriteria analisa
+    st.markdown("### Pilih Kriteria Analisa:")
+    opt_rsi = st.checkbox("RSI Oversold")
+    opt_macd = st.checkbox("MACD Bullish Crossover")
+    opt_gc = st.checkbox("Golden Cross")
+    opt_three = st.checkbox("Three of Kind (RSI + MACD + Volume)")
+    opt_complete = st.checkbox("Lengkap (Golden Cross + RSI + MACD + Volume)")
 
     if st.button("Mulai Analisa"):
-        # Validasi pilihan indikator
-        selected_indicators = []
-        if rsi_check: selected_indicators.append("RSI Oversold")
-        if macd_check: selected_indicators.append("MACD Bullish")
-        if volume_check: selected_indicators.append("Volume Naik 2 Hari")
-        if golden_cross_check: selected_indicators.append("Golden Cross")
-        
-        # Handle kombinasi khusus
-        if three_of_kind_check:
-            selected_indicators = ["RSI Oversold", "MACD Bullish", "Volume Naik 2 Hari"]
-        if lengkap_check:
-            selected_indicators = ["RSI Oversold", "MACD Bullish", "Volume Naik 2 Hari", "Golden Cross"]
-            
-        if not selected_indicators:
-            st.error("Pilih minimal satu indikator untuk analisis!")
-            return
-
         df = load_google_sheet(sheet_url)
         if df is None:
             return
@@ -123,26 +104,44 @@ def main():
         for i, ticker in enumerate(tickers):
             data = get_stock_data(ticker, end_analysis_date)
 
-            if data is None or len(data) < 15:  # Cukup 15 hari untuk MA15
+            if data is None or len(data) < 50:
                 progress_bar.progress((i + 1) / total)
                 continue
 
+            match_rsi = detect_rsi_oversold(data)
+            match_macd = detect_macd_bullish_crossover(data)
+            match_vol = detect_volume_up_two_days(data)
+            match_gc = detect_golden_cross(data)
+
             matched = []
-            if detect_rsi_oversold(data):
+            if match_rsi:
                 matched.append("RSI Oversold")
-            if detect_macd_bullish_crossover(data):
+            if match_macd:
                 matched.append("MACD Bullish")
-            if detect_volume_up_two_days(data):
+            if match_vol:
                 matched.append("Volume Naik 2 Hari")
-            if detect_golden_cross(data):
+            if match_gc:
                 matched.append("Golden Cross")
 
-            # Filter berdasarkan indikator yang dipilih
-            if all(indicator in matched for indicator in selected_indicators):
+            include = False
+
+            # Evaluasi checklist
+            if opt_rsi and match_rsi:
+                include = True
+            if opt_macd and match_macd:
+                include = True
+            if opt_gc and match_gc:
+                include = True
+            if opt_three and all([match_rsi, match_macd, match_vol]):
+                include = True
+            if opt_complete and all([match_gc, match_rsi, match_macd, match_vol]):
+                include = True
+
+            if include:
                 results.append({
                     "Ticker": ticker,
                     "Last Close": round(data['Close'].iloc[-1], 2),
-                    "Indikator Terpenuhi": ", ".join(matched)
+                    "Matched": ", ".join(matched)
                 })
 
             progress = (i + 1) / total
