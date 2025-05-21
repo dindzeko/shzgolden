@@ -47,6 +47,10 @@ def detect_accumulation(data):
     adi = calculate_adi(data)
     return adi.iloc[-1] > adi.iloc[-5]  # Akumulasi naik dalam 5 hari terakhir
 
+def detect_distribution(data):
+    adi = calculate_adi(data)
+    return adi.iloc[-1] < adi.iloc[-5]  # Distribusi jika ADI turun
+
 def detect_rsi_oversold(data):
     rsi = calculate_rsi(data)
     if rsi.empty or pd.isna(rsi.iloc[-1]):
@@ -136,7 +140,8 @@ def main():
     macd_strong_check = st.sidebar.checkbox("MACD Strong Bullish (>0)")
     volume_check = st.sidebar.checkbox("Volume Melejit (MA20 Confirmed)", value=True)
     golden_cross_check = st.sidebar.checkbox("Golden Cross")
-    accdist_check = st.sidebar.checkbox("Akumulasi Distribusi Naik")
+    acc_check = st.sidebar.checkbox("Akumulasi")
+    dist_check = st.sidebar.checkbox("Distribusi")
     three_of_kind_check = st.sidebar.checkbox("Three of Kind (RSI+MACD+Volume)", value=False)
     lengkap_check = st.sidebar.checkbox("Lengkap (Semua Indikator)", value=False)
 
@@ -149,7 +154,8 @@ def main():
         if macd_strong_check: selected_indicators.append("MACD Strong Bullish")
         if volume_check: selected_indicators.append("Volume Melejit (MA20 Confirmed)")
         if golden_cross_check: selected_indicators.append("Golden Cross")
-        if accdist_check: selected_indicators.append("Akumulasi Distribusi Naik")
+        if acc_check: selected_indicators.append("Akumulasi")
+        if dist_check: selected_indicators.append("Distribusi")
 
         if three_of_kind_check:
             selected_indicators = ["RSI Oversold", "MACD Bullish", "Volume Melejit (MA20 Confirmed)"]
@@ -157,7 +163,7 @@ def main():
             selected_indicators = [
                 "RSI Oversold", "RSI Exit Oversold", "RSI Bullish Divergence",
                 "MACD Bullish", "MACD Strong Bullish",
-                "Volume Melejit (MA20 Confirmed)", "Golden Cross", "Akumulasi Distribusi Naik"
+                "Volume Melejit (MA20 Confirmed)", "Golden Cross", "Akumulasi", "Distribusi"
             ]
 
         if not selected_indicators:
@@ -190,7 +196,8 @@ def main():
             if detect_macd_strong_bullish(data): matched.append("MACD Strong Bullish")
             if detect_volume_up_two_days(data): matched.append("Volume Melejit (MA20 Confirmed)")
             if detect_golden_cross(data): matched.append("Golden Cross")
-            if detect_accumulation(data): matched.append("Akumulasi Distribusi Naik")
+            if detect_accumulation(data): matched.append("Akumulasi")
+            if detect_distribution(data): matched.append("Distribusi")
 
             if all(ind in matched for ind in selected_indicators):
                 results.append({
