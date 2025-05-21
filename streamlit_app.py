@@ -64,7 +64,8 @@ def calculate_rsi(data, window=14):
     avg_loss = loss.ewm(alpha=1/window, adjust=False).mean()
     
     rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
 
 def calculate_adi(data):
     """Menghitung Accumulation/Distribution Index dengan handling division by zero"""
@@ -84,50 +85,76 @@ def detect_macd(data):
     signal = macd.ewm(span=9, adjust=False).mean()
     return macd, signal
 
-# ================== Logika Deteksi ==================
-def detect_rsi_divergence(data, rsi):
-    """Deteksi RSI Bullish Divergence sederhana (contoh)"""
-    # Implementasi sederhana untuk ilustrasi, bisa dikembangkan lebih lanjut
-    if len(rsi) < 20:
+def detect_volume_spike(data, threshold=2.0):
+    """Deteksi volume spike (volume hari ini > threshold * rata-rata 5 hari sebelumnya)"""
+    if len(data) < 6:
         return False
-    # Cek titik terendah RSI terakhir dan sebelumnya dengan harga
-    low_rsi_idx = rsi[-20:-1].idxmin()
-    low_price_idx = data['Close'][-20:-1].idxmin()
-    last_rsi = rsi.iloc[-1]
-    last_price = data['Close'].iloc[-1]
-    # RSI naik tapi harga turun = divergence bullish
-    if last_rsi > rsi.iloc[low_rsi_idx] and last_price < data['Close'].iloc[low_price_idx]:
-        return True
-    return False
-
-def detect_volume_spike(data, factor=2):
-    """Deteksi volume spike: volume hari terakhir > factor x rata-rata volume 10 hari sebelumnya"""
-    if len(data) < 11:
-        return False
-    recent_vol = data['Volume'].iloc[-1]
-    avg_vol = data['Volume'].iloc[-11:-1].mean()
-    return recent_vol > factor * avg_vol
+    recent_avg_vol = data['Volume'][-6:-1].mean()
+    last_vol = data['Volume'].iloc[-1]
+    return last_vol > threshold * recent_avg_vol
 
 def detect_golden_cross(data):
-    """Deteksi Golden Cross: MA50 crossing MA200 dari bawah ke atas"""
+    """Deteksi Golden Cross (MA50 crossing MA200 ke atas)"""
     if len(data) < 200:
         return False
     ma50 = data['Close'].rolling(window=50).mean()
     ma200 = data['Close'].rolling(window=200).mean()
-    # Cek crossing hari terakhir dan sebelumnya
-    cross_today = ma50.iloc[-1] > ma200.iloc[-1]
-    cross_yesterday = ma50.iloc[-2] <= ma200.iloc[-2]
-    return cross_today and cross_yesterday
+    return (ma50.iloc[-2] < ma200.iloc[-2]) and (ma50.iloc[-1] > ma200.iloc[-1])
 
-def detect_consolidation(data, window=20, threshold=0.02):
-    """Deteksi konsolidasi: range harga kecil dalam periode tertentu"""
-    if len(data) < window:
+def detect_consolidation(data, bb_window=20, bb_std=2, adx_threshold=20):
+    """Deteksi konsolidasi berdasarkan Bollinger Bands squeeze dan ADX rendah"""
+    if len(data) < bb_window + 10:
         return False
-    recent = data['Close'].iloc[-window:]
-    max_close = recent.max()
-    min_close = recent.min()
-    return (max_close - min_close) / min_close < threshold
+    
+    close = data['Close']
+    ma = close.rolling(bb_window).mean()
+    std = close.rolling(bb_window).std()
+    upper_band = ma + bb_std * std
+    lower_band = ma - bb_std * std
+    band_width = upper_band - lower_band
+    
+    # Bollinger Bands squeeze: bandwidth paling kecil 3 hari terakhir
+    squeeze = band_width.iloc[-3:].max() < band_width.iloc[-20:-3].mean()
+    
+    # Hitung ADX
+    high = data['High']
+    low = data['Low']
+    close = data['Close']
+    plus_dm = high.diff()
+    minus_dm = low.diff().abs()
+    tr = pd.concat([high - low, (high - close.shift()).abs(), (low - close.shift()).abs()], axis=1).max(axis=1)
+    atr = tr.rolling(14).mean()
+    
+    plus_di = 100 * plus_dm.rolling(14).mean() / atr
+    minus_di = 100 * minus_dm.rolling(14).mean() / atr
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
+    adx = dx.rolling(14).mean()
+    
+    adx_low = adx.iloc[-3:].max() < adx_threshold
+    
+    return squeeze and adx_low
 
+def detect_rsi_divergence(data, rsi):
+    """Deteksi RSI Bullish Divergence sederhana"""
+    if len(rsi) < 20:
+        return False
+    
+    # Ambil subset 20 bar terakhir sebelum bar terakhir
+    subset_rsi = rsi[-20:-1]
+    subset_close = data['Close'][-20:-1]
+    
+    low_rsi_idx = subset_rsi.idxmin()   # index label (bisa datetime)
+    low_price_idx = subset_close.idxmin()  # index label
+    
+    last_rsi = rsi.iloc[-1]
+    last_price = data['Close'].iloc[-1]
+    
+    # Gunakan .loc untuk akses berdasarkan index label
+    if last_rsi > rsi.loc[low_rsi_idx] and last_price < data['Close'].loc[low_price_idx]:
+        return True
+    return False
+
+# ================== Logika Deteksi ==================
 def detect_indicators(data):
     """Mendeteksi semua indikator sekaligus untuk optimasi"""
     if data is None or len(data) < 50:
