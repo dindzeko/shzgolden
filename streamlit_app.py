@@ -3,7 +3,7 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
 
-# Fungsi untuk membaca Google Sheets
+# === Fungsi Membaca Google Sheets ===
 def load_google_sheet(sheet_url):
     try:
         file_id = sheet_url.split("/d/")[1].split("/")[0]
@@ -17,7 +17,7 @@ def load_google_sheet(sheet_url):
         st.error(f"Gagal membaca Google Sheet: {e}")
         return None
 
-# Ambil data dari Yahoo Finance
+# === Fungsi Mengambil Data Saham ===
 def get_stock_data(ticker, end_date):
     try:
         start_date = end_date - timedelta(days=90)
@@ -47,9 +47,21 @@ def detect_rsi_bullish_divergence(data):
         return False
     return close[low2] < close[low1] and rsi[low2] > rsi[low1]
 
+# === Indikator Money Flow Index (MFI) ===
+def calculate_mfi(data, period=14):
+    typical_price = (data['High'] + data['Low'] + data['Close']) / 3
+    raw_money_flow = typical_price * data['Volume']
+    direction = typical_price.diff()
+    positive_flow = raw_money_flow.where(direction > 0, 0)
+    negative_flow = raw_money_flow.where(direction < 0, 0)
+    pos_mf = positive_flow.rolling(period).sum()
+    neg_mf = negative_flow.rolling(period).sum()
+    mfi = 100 - (100 / (1 + (pos_mf / neg_mf)))
+    return mfi
+
 # === Aplikasi Utama ===
 def main():
-    st.title("📈 Deteksi RSI Bullish Divergence Saham")
+    st.title("📊 Analisa Saham: RSI Bullish Divergence + MFI")
 
     sheet_url = st.text_input("Masukkan URL Google Sheets", value="https://docs.google.com/spreadsheets/d/1t6wgBIcPEUWMq40GdIH1GtZ8dvI9PZ2v/edit?usp=sharing")
     end_analysis_date = st.date_input("Tanggal Akhir Analisis", value=datetime.today())
@@ -71,20 +83,44 @@ def main():
                 progress_bar.progress((i + 1) / len(tickers))
                 continue
 
-            if detect_rsi_bullish_divergence(data):
+            match_rsi = detect_rsi_bullish_divergence(data)
+
+            mfi_series = calculate_mfi(data)
+            mfi_value = round(mfi_series.iloc[-1], 2) if not mfi_series.isna().all() else None
+
+            if mfi_value is not None:
+                if mfi_value < 20:
+                    keterangan_mfi = "MFI < 20: Kondisi oversold, potensi rebound jika dikonfirmasi indikator lain."
+                elif mfi_value > 80:
+                    keterangan_mfi = "MFI > 80: Kondisi overbought, potensi koreksi harga."
+                else:
+                    keterangan_mfi = "MFI netral."
+            else:
+                keterangan_mfi = "MFI tidak tersedia."
+
+            if match_rsi:
                 results.append({
                     "Ticker": ticker,
                     "Last Close": round(data['Close'].iloc[-1], 2),
-                    "Indikator": "RSI Bullish Divergence"
+                    "RSI Bullish Divergence": "✅",
+                    "MFI": mfi_value,
+                    "Keterangan MFI": keterangan_mfi
                 })
 
             progress_bar.progress((i + 1) / len(tickers))
 
         if results:
-            st.success("✅ Saham yang memenuhi RSI Bullish Divergence:")
+            st.success("✅ Saham yang memenuhi kriteria RSI Bullish Divergence:")
             st.dataframe(pd.DataFrame(results))
         else:
-            st.warning("❌ Tidak ada saham yang memenuhi RSI Bullish Divergence.")
+            st.warning("❌ Tidak ada saham yang memenuhi kriteria RSI Bullish Divergence.")
+
+        st.subheader("🔎 Contoh Data BBCA")
+        bbca_data = get_stock_data("BBCA", end_analysis_date)
+        if bbca_data is not None:
+            st.dataframe(bbca_data.tail(50))
+        else:
+            st.error("❌ Gagal mengambil data BBCA.")
 
 if __name__ == "__main__":
     main()
