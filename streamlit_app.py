@@ -17,7 +17,7 @@ def load_google_sheet(sheet_url):
         st.error(f"Gagal membaca Google Sheet: {e}")
         return None
 
-# Ambil data dari Yahoo Finance 
+# Ambil data dari Yahoo Finance
 def get_stock_data(ticker, end_date):
     try:
         start_date = end_date - timedelta(days=90)
@@ -49,21 +49,12 @@ def detect_rsi_bullish_divergence(data):
 
 # === Aplikasi Utama ===
 def main():
-    st.title("📊 Analisa Saham - RSI Bullish Divergence Saja")
+    st.title("📈 Deteksi RSI Bullish Divergence Saham")
 
     sheet_url = st.text_input("Masukkan URL Google Sheets", value="https://docs.google.com/spreadsheets/d/1t6wgBIcPEUWMq40GdIH1GtZ8dvI9PZ2v/edit?usp=sharing")
     end_analysis_date = st.date_input("Tanggal Akhir Analisis", value=datetime.today())
 
-    st.sidebar.header("Pilih Indikator Analisis")
-    rsi_div_check = st.sidebar.checkbox("RSI Bullish Divergence", value=True)
-
     if st.button("Mulai Analisa"):
-        if not rsi_div_check:
-            st.error("Pilih minimal satu indikator!")
-            return
-
-        selected_indicators = ["RSI Bullish Divergence"]
-
         df = load_google_sheet(sheet_url)
         if df is None:
             return
@@ -80,30 +71,20 @@ def main():
                 progress_bar.progress((i + 1) / len(tickers))
                 continue
 
-            matched = []
-            if detect_rsi_bullish_divergence(data): matched.append("RSI Bullish Divergence")
-
-            if all(ind in matched for ind in selected_indicators):
+            if detect_rsi_bullish_divergence(data):
                 results.append({
                     "Ticker": ticker,
                     "Last Close": round(data['Close'].iloc[-1], 2),
-                    "Indikator Terpenuhi": ", ".join(matched)
+                    "Indikator": "RSI Bullish Divergence"
                 })
 
             progress_bar.progress((i + 1) / len(tickers))
 
         if results:
-            st.success("✅ Saham yang memenuhi kriteria:")
+            st.success("✅ Saham yang memenuhi RSI Bullish Divergence:")
             st.dataframe(pd.DataFrame(results))
         else:
-            st.warning("❌ Tidak ada saham yang memenuhi kriteria.")
-
-        st.subheader("🔎 Cek Data BBCA")
-        bbca_data = get_stock_data("BBCA", end_analysis_date)
-        if bbca_data is not None:
-            st.dataframe(bbca_data.tail(50))
-        else:
-            st.error("❌ Gagal mengambil data BBCA.")
+            st.warning("❌ Tidak ada saham yang memenuhi RSI Bullish Divergence.")
 
 if __name__ == "__main__":
     main()
