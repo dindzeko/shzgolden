@@ -2,159 +2,229 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
+import numpy as np
 
-# === Fungsi Load Google Sheet ===
+# === Improved Data Loading with Caching ===
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_google_sheet(sheet_url):
+    """Load data from Google Sheets with better error handling and caching"""
     try:
         file_id = sheet_url.split("/d/")[1].split("/")[0]
         export_url = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=csv"
         df = pd.read_csv(export_url)
+        
+        # Normalize column names
+        df.columns = df.columns.str.strip().str.title()
+        
         if 'Ticker' not in df.columns:
             st.error("Kolom 'Ticker' tidak ditemukan di Google Sheets.")
             return None
         return df
     except Exception as e:
-        st.error(f"Gagal membaca Google Sheet: {e}")
+        st.error(f"Gagal membaca Google Sheet: {str(e)}")
         return None
 
-# === Ambil data saham dari Yahoo Finance ===
-def get_stock_data(ticker, end_date):
+# === Efficient Stock Data Fetching with Caching ===
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_stock_data(ticker, end_date, days_back=90):
+    """Get stock data with caching and error handling"""
     try:
-        start_date = end_date - timedelta(days=90)
+        start_date = end_date - timedelta(days=days_back)
         stock = yf.Ticker(f"{ticker}.JK")
-        data = stock.history(start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'))
+        data = stock.history(
+            start=start_date.strftime('%Y-%m-%d'),
+            end=(end_date + timedelta(days=1)).strftime('%Y-%m-%d')  # Include end date
+        )
         return data if not data.empty else None
-    except Exception:
+    except Exception as e:
+        st.error(f"Error mendapatkan data {ticker}: {str(e)}")
         return None
 
-# === Indikator RSI Bullish Divergence ===
+# === Technical Indicators ===
 def calculate_rsi(data, window=14):
+    """Calculate RSI with vectorized operations"""
     delta = data['Close'].diff()
-    gain = delta.clip(lower=0).rolling(window=window).mean()
-    loss = (-delta.clip(upper=0)).rolling(window=window).mean()
-    rs = gain / loss
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+    
+    avg_gain = gain.rolling(window).mean()
+    avg_loss = loss.rolling(window).mean()
+    
+    rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
-    return rsi.fillna(0)
+    return rsi.fillna(50)  # Neutral value for NaN
 
 def detect_rsi_bullish_divergence(data):
+    """Improved RSI divergence detection with lookback window"""
+    if len(data) < 30:
+        return False
+    
     rsi = calculate_rsi(data)
     close = data['Close']
-    if len(rsi) < 15:
+    
+    # Find lowest lows in last 30 days
+    low_idx = close.rolling(15).apply(lambda x: x.idxmin(), raw=False).dropna()
+    
+    if len(low_idx) < 2:
         return False
-    low1 = close.iloc[-10:-5].idxmin()
-    low2 = close.iloc[-5:].idxmin()
-    if low1 >= low2:
-        return False
-    return close[low2] < close[low1] and rsi[low2] > rsi[low1]
+    
+    # Get two most recent lows
+    low1_idx = low_idx.iloc[-2]
+    low2_idx = low_idx.iloc[-1]
+    
+    # Validate divergence pattern
+    price_lower = close[low2_idx] < close[low1_idx]
+    rsi_higher = rsi[low2_idx] > rsi[low1_idx]
+    
+    return price_lower and rsi_higher
 
-# === Indikator MFI ===
 def calculate_mfi(data, window=14):
-    typical_price = (data['High'] + data['Low'] + data['Close']) / 3
-    money_flow = typical_price * data['Volume']
-    positive_flow = []
-    negative_flow = []
-
-    for i in range(1, len(typical_price)):
-        if typical_price[i] > typical_price[i-1]:
-            positive_flow.append(money_flow[i])
-            negative_flow.append(0)
-        else:
-            positive_flow.append(0)
-            negative_flow.append(money_flow[i])
-
-    pos_mf = pd.Series(positive_flow).rolling(window=window).sum()
-    neg_mf = pd.Series(negative_flow).rolling(window=window).sum()
-
-    mfi = 100 - (100 / (1 + (pos_mf / neg_mf)))
-    mfi.index = data.index[1:]  # geser index karena mulai dari i=1
+    """Vectorized MFI calculation"""
+    tp = (data['High'] + data['Low'] + data['Close']) / 3
+    rmf = tp * data['Volume']
+    
+    # Get money flow direction
+    mf_direction = np.where(tp > tp.shift(1), 1, np.where(tp < tp.shift(1), -1, 0))
+    
+    # Calculate positive/negative money flow
+    pos_mf = np.where(mf_direction == 1, rmf, 0)
+    neg_mf = np.where(mf_direction == -1, rmf, 0)
+    
+    # Rolling sums
+    pos_mf_sum = pd.Series(pos_mf).rolling(window).sum()
+    neg_mf_sum = pd.Series(neg_mf).rolling(window).sum()
+    
+    # Calculate MFI
+    mfi = 100 * pos_mf_sum / (pos_mf_sum + neg_mf_sum)
     return mfi
 
 def detect_mfi_signal(data):
+    """MFI signal detection with bounds checking"""
     mfi = calculate_mfi(data)
-    if len(mfi) == 0 or pd.isna(mfi.iloc[-1]):
+    if len(mfi) < 1 or mfi.iloc[-1] is np.nan:
         return False
     return mfi.iloc[-1] < 20 or mfi.iloc[-1] > 80
 
-# === Indikator Harga di Atas MA ===
 def check_price_above_ma(data, ma_period):
+    """Check price position relative to MA"""
     if len(data) < ma_period:
         return False
-    ma = data['Close'].rolling(window=ma_period).mean()
-    last_ma = ma.iloc[-1]
+        
+    ma = data['Close'].rolling(ma_period).mean()
     last_close = data['Close'].iloc[-1]
-    if pd.isna(last_ma):
-        return False
-    return last_close > last_ma
+    last_ma = ma.iloc[-1]
+    
+    return not np.isnan(last_ma) and last_close > last_ma
 
-# === Aplikasi Streamlit ===
+# === Streamlit App ===
 def main():
-    st.set_page_config(page_title="Analisa Saham: RSI + MFI + MA", layout="wide")
+    st.set_page_config(
+        page_title="Analisa Saham: RSI + MFI + MA", 
+        layout="wide",
+        page_icon="📈"
+    )
+    
+    # Sidebar Configuration
     st.sidebar.header("⚙️ Pengaturan Analisis")
-
-    sheet_url = st.sidebar.text_input("URL Google Sheets", value="https://docs.google.com/spreadsheets/d/1t6wgBIcPEUWMq40GdIH1GtZ8dvI9PZ2v/edit?usp=sharing")
-    end_analysis_date = st.sidebar.date_input("Tanggal Akhir Analisis", value=datetime.today())
-
+    sheet_url = st.sidebar.text_input(
+        "URL Google Sheets",
+        value="https://docs.google.com/spreadsheets/d/1t6wgBIcPEUWMq40GdIH1GtZ8dvI9PZ2v/edit?usp=sharing"
+    )
+    end_analysis_date = st.sidebar.date_input(
+        "Tanggal Akhir Analisis", 
+        value=datetime.today()
+    )
+    
     st.sidebar.header("📌 Pilih Indikator")
-    rsi_check = st.sidebar.checkbox("RSI Bullish Divergence")
-    mfi_check = st.sidebar.checkbox("MFI Oversold (<20) atau Overbought (>80)")
-    ma_check = st.sidebar.checkbox("Harga di atas MA")
-    ma_period = st.sidebar.selectbox("Pilih MA:", options=[5, 10, 20], index=0, disabled=not ma_check)
-
-    run = st.sidebar.button("🚀 Jalankan Analisa")
-
+    rsi_check = st.sidebar.checkbox("RSI Bullish Divergence", True)
+    mfi_check = st.sidebar.checkbox("MFI Oversold (<20) atau Overbought (>80)", True)
+    ma_check = st.sidebar.checkbox("Harga di atas MA", True)
+    ma_period = st.sidebar.selectbox(
+        "Pilih MA:", 
+        options=[5, 10, 20], 
+        index=0,
+        disabled=not ma_check
+    )
+    
+    st.sidebar.markdown("---")
+    st.sidebar.info("✅ Pilih indikator yang ingin digunakan untuk analisis")
+    
+    # Main Content
     st.title("📊 Analisa Saham: RSI + MFI + MA")
-
-    if run:
+    st.markdown("""
+    Aplikasi ini menganalisis saham berdasarkan:
+    - **RSI Bullish Divergence**: Harga membuat lower low tapi RSI membuat higher low
+    - **MFI**: Money Flow Index menunjukkan kondisi oversold (<20) atau overbought (>80)
+    - **Moving Average**: Harga penutupan di atas moving average
+    """)
+    
+    if st.button("🚀 Jalankan Analisa", key="run_analysis"):
+        # Validation
         if not (rsi_check or mfi_check or ma_check):
             st.warning("⚠️ Pilih minimal satu indikator untuk memulai analisa.")
             return
-
+            
+        # Load data
         df = load_google_sheet(sheet_url)
-        if df is None:
+        if df is None or df.empty:
             return
-
+            
         tickers = df['Ticker'].dropna().unique().tolist()
         st.info(f"🔍 Menganalisis {len(tickers)} saham...")
-        progress_bar = st.progress(0)
+        
+        # Analysis
         results = []
-
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
         for i, ticker in enumerate(tickers):
+            status_text.text(f"Memproses {ticker} ({i+1}/{len(tickers)})")
             data = get_stock_data(ticker, end_analysis_date)
-            if data is None or len(data) < 20:
+            
+            if data is None or len(data) < 30:
                 progress_bar.progress((i + 1) / len(tickers))
                 continue
-
-            match = []
-            if rsi_check and detect_rsi_bullish_divergence(data):
-                match.append("RSI Bullish Divergence")
-            if mfi_check and detect_mfi_signal(data):
-                match.append("MFI Oversold/Overbought")
-            if ma_check and check_price_above_ma(data, ma_period):
-                match.append(f"Price > MA{ma_period}")
-
-            if len(match) == sum([rsi_check, mfi_check, ma_check]):
+                
+            conditions = []
+            if rsi_check:
+                conditions.append(detect_rsi_bullish_divergence(data))
+            if mfi_check:
+                conditions.append(detect_mfi_signal(data))
+            if ma_check:
+                conditions.append(check_price_above_ma(data, ma_period))
+                
+            # Check if all selected conditions are met
+            if all(conditions):
                 results.append({
                     "Ticker": ticker,
                     "Last Close": round(data['Close'].iloc[-1], 2),
-                    "Indikator Terpenuhi": ", ".join(match)
+                    "Volume": f"{data['Volume'].iloc[-1]:,}",
+                    "Indikator Terpenuhi": " | ".join([
+                        "RSI Divergence" if rsi_check and conditions[0] else "",
+                        "MFI Signal" if mfi_check and conditions[len(conditions)-2] else "",
+                        f"MA{ma_period}" if ma_check and conditions[-1] else ""
+                    ]).strip(" |")
                 })
-
+                
             progress_bar.progress((i + 1) / len(tickers))
-
+        
+        # Display results
         st.subheader("📈 Hasil Analisis Saham")
         if results:
-            st.success("✅ Saham yang memenuhi kriteria:")
-            st.dataframe(pd.DataFrame(results))
+            result_df = pd.DataFrame(results)
+            st.success(f"✅ Ditemukan {len(result_df)} saham yang memenuhi kriteria:")
+            st.dataframe(result_df.sort_values("Last Close", ascending=False))
+            
+            # Show chart example
+            st.subheader(f"📊 Contoh Grafik {results[0]['Ticker']}")
+            sample_data = get_stock_data(results[0]['Ticker'], end_analysis_date)
+            if sample_data is not None:
+                st.line_chart(sample_data[['Close', 'Volume']], use_container_width=True)
         else:
             st.warning("❌ Tidak ada saham yang memenuhi kombinasi indikator.")
-
-        # Contoh Saham BBCA
-        st.subheader("📊 Contoh Data Saham BBCA")
-        bbca_data = get_stock_data("BBCA", end_analysis_date)
-        if bbca_data is not None:
-            st.dataframe(bbca_data.tail(50))
-        else:
-            st.error("Gagal mengambil data BBCA.")
+            
+        progress_bar.empty()
+        status_text.empty()
 
 if __name__ == "__main__":
     main()
